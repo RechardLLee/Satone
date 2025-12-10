@@ -30,11 +30,13 @@ namespace ChillAIMod
         // ================= 【UI 变量】 =================
         private bool _showInputWindow = false;
         private bool _showSettings = false;
-        private Rect _windowRect = new Rect(Screen.width / 2 - 225, Screen.height / 2 - 150, 500, 0);
+        private Rect _windowRect = new Rect(Screen.width / 2 - 250, Screen.height / 2 - 100, 500, 0);
         private Vector2 _scrollPosition = Vector2.zero;
+        private float _lastEnterPressTime = 0f;
 
         private string _playerInput = "";
         private bool _isProcessing = false;
+        private string _inputFieldName = "PlayerInputField";
 
         private AudioSource _audioSource;
         private MonoBehaviour _heroineService;
@@ -140,94 +142,340 @@ namespace ChillAIMod
 
             if (_showInputWindow)
             {
-                // 动态调整窗口高度
-                float targetHeight = _showSettings ? 600f : 200f;
+                // 动态调整窗口大小 - 根据模式自适应
+                float targetWidth = _showSettings ? 650f : 500f;
+                float targetHeight = _showSettings ? 650f : 180f;
+                _windowRect.width = targetWidth;
                 _windowRect.height = targetHeight;
+                
+                // 居中窗口
+                if (_showSettings && _windowRect.width == 650f)
+                {
+                    _windowRect.x = Screen.width / 2 - 325f;
+                }
+                else if (!_showSettings && _windowRect.width == 500f)
+                {
+                    _windowRect.x = Screen.width / 2 - 250f;
+                }
 
-                GUI.backgroundColor = new Color(0.1f, 0.1f, 0.1f, 0.95f);
-                _windowRect = GUI.Window(12345, _windowRect, DrawWindowContent, "Chill AI 控制台");
+                GUI.backgroundColor = new Color(0.12f, 0.12f, 0.15f, 0.98f);
+                _windowRect = GUI.Window(12345, _windowRect, DrawWindowContent, "💬 Chill AI 控制台");
                 GUI.FocusWindow(12345);
+            }
+            
+            // 在窗口级别检测回车键（更可靠的方式）- 在窗口绘制后检测
+            if (_showInputWindow && !_isProcessing)
+            {
+                Event currentEvent = Event.current;
+                if (currentEvent.isKey && currentEvent.type == EventType.KeyDown)
+                {
+                    // 防止重复触发
+                    if (Time.unscaledTime - _lastEnterPressTime > 0.1f)
+                    {
+                        if ((currentEvent.keyCode == KeyCode.Return || currentEvent.keyCode == KeyCode.KeypadEnter) && !currentEvent.shift)
+                        {
+                            if (!string.IsNullOrEmpty(_playerInput.Trim()))
+                            {
+                                StartCoroutine(AIProcessRoutine(_playerInput.Trim()));
+                                _playerInput = "";
+                                _lastEnterPressTime = Time.unscaledTime;
+                                currentEvent.Use();
+                            }
+                        }
+                    }
+                }
             }
         }
 
         void DrawWindowContent(int windowID)
         {
-            _scrollPosition = GUILayout.BeginScrollView(_scrollPosition);
-            GUILayout.BeginVertical();
-
-            string status = _heroineService != null ? "🟢 核心已连接" : "🔴 正在寻找核心...";
-            GUILayout.Label(status);
-
-            if (GUILayout.Button(_showSettings ? "🔽 收起设置" : "▶️ 展开设置 (API / 人设 / 路径)", GUILayout.Height(25)))
+            // 重新设计的简洁输入界面
+            if (!_showSettings)
             {
-                _showSettings = !_showSettings;
-                _windowRect.height = _showSettings ? 650f : 250f;
-            }
-
-            if (_showSettings)
-            {
-                GUILayout.Space(10);
+                GUILayout.BeginVertical(GUILayout.ExpandHeight(true));
+                
+                // 顶部栏：标题和设置按钮 - 美化样式
+                GUILayout.BeginHorizontal("box");
+                GUIStyle titleStyle = new GUIStyle(GUI.skin.label);
+                titleStyle.fontSize = 15;
+                titleStyle.fontStyle = FontStyle.Bold;
+                titleStyle.normal.textColor = new Color(0.9f, 0.9f, 0.95f);
+                GUILayout.Label("💬 与聪音对话", titleStyle);
+                GUILayout.FlexibleSpace();
+                string status = _heroineService != null ? "🟢" : "🔴";
+                GUILayout.Label(status, GUILayout.Width(20));
+                GUI.backgroundColor = new Color(0.3f, 0.5f, 0.7f);
+                if (GUILayout.Button("⚙️ 设置", GUILayout.Width(60), GUILayout.Height(25)))
+                {
+                    _showSettings = !_showSettings;
+                    _windowRect.height = 650f;
+                    _windowRect.width = 650f;
+                }
+                GUI.backgroundColor = Color.white;
+                GUILayout.EndHorizontal();
+                
+                GUILayout.Space(8);
+                
+                // 输入区域 - 使用带边框的样式，更美观
                 GUILayout.BeginVertical("box");
-                GUILayout.Label("<b>--- 基础配置 ---</b>");
-                GUILayout.Label("API URL:");
-                _chatApiUrlConfig.Value = GUILayout.TextField(_chatApiUrlConfig.Value);
-                GUILayout.Label("API Key:");
-                _apiKeyConfig.Value = GUILayout.TextField(_apiKeyConfig.Value);
-                GUILayout.Label("Model Name:");
-                _modelConfig.Value = GUILayout.TextField(_modelConfig.Value);
+                GUI.backgroundColor = new Color(0.98f, 0.98f, 0.99f);
+                
+                // 多行输入框 - 优化样式
+                GUI.SetNextControlName(_inputFieldName);
+                GUIStyle textAreaStyle = new GUIStyle(GUI.skin.textArea);
+                textAreaStyle.padding = new RectOffset(10, 10, 10, 10);
+                textAreaStyle.fontSize = 14;
+                textAreaStyle.wordWrap = true;
+                textAreaStyle.normal.textColor = new Color(0.1f, 0.1f, 0.1f);
+                
+                _playerInput = GUILayout.TextArea(_playerInput, textAreaStyle, GUILayout.MinHeight(75), GUILayout.MaxHeight(150), GUILayout.ExpandHeight(false));
+                
+                // 自动聚焦到输入框（仅在非处理状态时）
+                if (!_isProcessing && GUI.GetNameOfFocusedControl() != _inputFieldName)
+                {
+                    GUI.FocusControl(_inputFieldName);
+                }
+                
+                // 检测回车键和空格键发送（在输入框绘制后立即检测）
+                Event evt = Event.current;
+                if (evt.isKey && evt.type == EventType.KeyDown && !_isProcessing)
+                {
+                    bool shouldSend = false;
+                    // 回车键发送（Shift+Enter换行）
+                    if ((evt.keyCode == KeyCode.Return || evt.keyCode == KeyCode.KeypadEnter) && !evt.shift)
+                    {
+                        if (!string.IsNullOrEmpty(_playerInput.Trim()))
+                        {
+                            shouldSend = true;
+                        }
+                    }
+                    // 空格键发送
+                    else if (evt.keyCode == KeyCode.Space && !string.IsNullOrEmpty(_playerInput.Trim()))
+                    {
+                        shouldSend = true;
+                    }
+                    
+                    if (shouldSend)
+                    {
+                        StartCoroutine(AIProcessRoutine(_playerInput.Trim()));
+                        _playerInput = "";
+                        evt.Use();
+                        GUI.FocusControl(null);
+                    }
+                }
+                
+                GUI.backgroundColor = Color.white;
+                GUILayout.EndVertical();
+                
+                GUILayout.Space(8);
+                
+                // 底部操作栏 - 美化
+                GUILayout.BeginHorizontal();
+                
+                // 提示文字 - 更清晰的样式
+                GUIStyle hintStyle = new GUIStyle(GUI.skin.label);
+                hintStyle.fontSize = 11;
+                hintStyle.normal.textColor = new Color(0.65f, 0.7f, 0.8f);
+                GUILayout.Label("💡 Enter发送 | Shift+Enter换行 | 空格发送", hintStyle);
+                
+                GUILayout.FlexibleSpace();
+                
+                // 发送按钮 - 更现代的设计
+                Color btnColor = _isProcessing ? new Color(0.4f, 0.4f, 0.4f) : new Color(0.25f, 0.65f, 0.95f);
+                GUI.backgroundColor = btnColor;
+                
+                GUIStyle btnStyle = new GUIStyle(GUI.skin.button);
+                btnStyle.fontSize = 13;
+                btnStyle.fontStyle = FontStyle.Bold;
+                btnStyle.padding = new RectOffset(22, 22, 10, 10);
+                btnStyle.normal.textColor = Color.white;
+                btnStyle.hover.textColor = Color.white;
+                btnStyle.active.textColor = new Color(0.9f, 0.9f, 0.9f);
+                
+                string btnText = _isProcessing ? "⏳ 思考中..." : "📤 发送";
+                if (GUILayout.Button(btnText, btnStyle, GUILayout.Height(38), GUILayout.Width(110)))
+                {
+                    if (!string.IsNullOrEmpty(_playerInput.Trim()) && !_isProcessing)
+                    {
+                        StartCoroutine(AIProcessRoutine(_playerInput.Trim()));
+                        _playerInput = "";
+                    }
+                }
+                
+                GUI.backgroundColor = Color.white;
+                GUILayout.EndHorizontal();
+                
+                GUILayout.EndVertical();
+            }
+            else
+            {
+                // 设置模式：显示完整配置 - 美化设计
+                _scrollPosition = GUILayout.BeginScrollView(_scrollPosition);
+                GUILayout.BeginVertical();
+
+                // 顶部栏 - 美化
+                GUILayout.BeginHorizontal("box");
+                GUIStyle headerStyle = new GUIStyle(GUI.skin.label);
+                headerStyle.fontSize = 14;
+                headerStyle.fontStyle = FontStyle.Bold;
+                headerStyle.normal.textColor = new Color(0.9f, 0.9f, 0.95f);
+                string status = _heroineService != null ? "🟢 已连接" : "🔴 连接中...";
+                GUILayout.Label(status, headerStyle);
+                GUILayout.FlexibleSpace();
+                GUI.backgroundColor = new Color(0.6f, 0.3f, 0.3f);
+                if (GUILayout.Button("✖️ 关闭设置", GUILayout.Height(28), GUILayout.Width(100)))
+                {
+                    _showSettings = false;
+                    _windowRect.height = 180f;
+                    _windowRect.width = 500f;
+                }
+                GUI.backgroundColor = Color.white;
+                GUILayout.EndHorizontal();
+
+                GUILayout.Space(8);
+                
+                // 基础配置区域 - 美化
+                GUILayout.BeginVertical("box");
+                GUIStyle sectionStyle = new GUIStyle(GUI.skin.label);
+                sectionStyle.fontSize = 13;
+                sectionStyle.fontStyle = FontStyle.Bold;
+                sectionStyle.normal.textColor = new Color(0.7f, 0.8f, 1f);
+                GUILayout.Label("📡 基础配置", sectionStyle);
+                GUILayout.Space(5);
+                
+                GUILayout.Label("API URL:", new GUIStyle(GUI.skin.label) { fontSize = 11 });
+                _chatApiUrlConfig.Value = GUILayout.TextField(_chatApiUrlConfig.Value, GUILayout.Height(22));
+                
+                GUILayout.Space(3);
+                GUILayout.Label("API Key:", new GUIStyle(GUI.skin.label) { fontSize = 11 });
+                _apiKeyConfig.Value = GUILayout.TextField(_apiKeyConfig.Value, GUILayout.Height(22));
+                
+                GUILayout.Space(3);
+                GUILayout.Label("Model Name:", new GUIStyle(GUI.skin.label) { fontSize = 11 });
+                _modelConfig.Value = GUILayout.TextField(_modelConfig.Value, GUILayout.Height(22));
                 GUILayout.EndVertical();
 
-                GUILayout.Space(5);
+                GUILayout.Space(8);
+                
+                // 语音配置区域 - 美化，突出显示API位置
                 GUILayout.BeginVertical("box");
-                GUILayout.Label("<b>--- 语音配置 ---</b>");
-                GUILayout.Label("音频路径 (.wav):");
-                _refAudioPathConfig.Value = GUILayout.TextField(_refAudioPathConfig.Value);
-                GUILayout.Label("音频台词:");
+                GUILayout.Label("🔊 语音配置", sectionStyle);
+                GUILayout.Space(5);
+                
+                GUILayout.Label("🎯 语音API地址 (SoVITS):", new GUIStyle(GUI.skin.label) { fontSize = 11, normal = { textColor = new Color(0.9f, 0.85f, 0.5f) } });
+                GUI.backgroundColor = new Color(0.98f, 0.97f, 0.9f);
+                _sovitsUrlConfig.Value = GUILayout.TextField(_sovitsUrlConfig.Value, GUILayout.Height(24));
+                GUI.backgroundColor = Color.white;
+                
+                GUILayout.Space(3);
+                GUILayout.Label("参考音频路径 (.wav):", new GUIStyle(GUI.skin.label) { fontSize = 11 });
+                _refAudioPathConfig.Value = GUILayout.TextField(_refAudioPathConfig.Value, GUILayout.Height(22));
+                
+                GUILayout.Space(3);
+                GUILayout.Label("参考音频台词:", new GUIStyle(GUI.skin.label) { fontSize = 11 });
                 _promptTextConfig.Value = GUILayout.TextArea(_promptTextConfig.Value, GUILayout.Height(50));
                 GUILayout.EndVertical();
 
-                GUILayout.Space(5);
+                GUILayout.Space(8);
+                
+                // 人设配置区域 - 美化
                 GUILayout.BeginVertical("box");
-                GUILayout.Label("<b>--- 人设 (System Prompt) ---</b>");
+                GUILayout.Label("👤 人设 (System Prompt)", sectionStyle);
+                GUILayout.Space(5);
 
                 _personaScrollPosition = GUILayout.BeginScrollView(_personaScrollPosition, GUILayout.Height(150));
-
                 _personaConfig.Value = GUILayout.TextArea(_personaConfig.Value, GUILayout.ExpandHeight(true));
-
                 GUILayout.EndScrollView();
-
                 GUILayout.EndVertical();
 
                 GUILayout.Space(10);
-                if (GUILayout.Button("💾 保存所有配置", GUILayout.Height(30)))
+                
+                // 保存按钮 - 美化
+                GUI.backgroundColor = new Color(0.3f, 0.7f, 0.4f);
+                GUIStyle saveBtnStyle = new GUIStyle(GUI.skin.button);
+                saveBtnStyle.fontSize = 13;
+                saveBtnStyle.fontStyle = FontStyle.Bold;
+                saveBtnStyle.normal.textColor = Color.white;
+                if (GUILayout.Button("💾 保存所有配置", saveBtnStyle, GUILayout.Height(32)))
                 {
                     Config.Save();
                     Logger.LogInfo("配置已保存！");
                 }
+                GUI.backgroundColor = Color.white;
+                
                 GUILayout.Space(10);
-            }
-
-            // === 对话区域 ===
-            GUILayout.Space(10);
-            GUILayout.Label("<b>与聪音对话:</b>");
-
-            GUI.backgroundColor = Color.white;
-            _playerInput = GUILayout.TextField(_playerInput, GUILayout.Height(50));
-
-            GUILayout.Space(5);
-            GUI.backgroundColor = _isProcessing ? Color.gray : Color.cyan;
-
-            if (GUILayout.Button(_isProcessing ? "思考中..." : "发送 (Send)", GUILayout.Height(40)))
-            {
-                if (!string.IsNullOrEmpty(_playerInput) && !_isProcessing)
+                
+                // 设置模式下的输入区域 - 同样使用新设计
+                GUILayout.Label("💬 与聪音对话", sectionStyle);
+                GUILayout.Space(5);
+                
+                GUILayout.BeginVertical("box");
+                GUI.backgroundColor = new Color(0.98f, 0.98f, 0.99f);
+                
+                GUI.SetNextControlName(_inputFieldName);
+                GUIStyle textAreaStyle2 = new GUIStyle(GUI.skin.textArea);
+                textAreaStyle2.padding = new RectOffset(10, 10, 10, 10);
+                textAreaStyle2.fontSize = 14;
+                textAreaStyle2.wordWrap = true;
+                textAreaStyle2.normal.textColor = new Color(0.1f, 0.1f, 0.1f);
+                
+                _playerInput = GUILayout.TextArea(_playerInput, textAreaStyle2, GUILayout.MinHeight(65), GUILayout.MaxHeight(120));
+                
+                // 检测回车键和空格键发送（设置模式下）
+                Event evt2 = Event.current;
+                if (evt2.isKey && evt2.type == EventType.KeyDown && !_isProcessing)
                 {
-                    StartCoroutine(AIProcessRoutine(_playerInput));
-                    _playerInput = "";
+                    // 回车键发送（Shift+Enter换行）
+                    if ((evt2.keyCode == KeyCode.Return || evt2.keyCode == KeyCode.KeypadEnter) && !evt2.shift)
+                    {
+                        if (!string.IsNullOrEmpty(_playerInput.Trim()))
+                        {
+                            StartCoroutine(AIProcessRoutine(_playerInput.Trim()));
+                            _playerInput = "";
+                            evt2.Use();
+                        }
+                    }
+                    // 空格键发送
+                    else if (evt2.keyCode == KeyCode.Space && !string.IsNullOrEmpty(_playerInput.Trim()))
+                    {
+                        StartCoroutine(AIProcessRoutine(_playerInput.Trim()));
+                        _playerInput = "";
+                        evt2.Use();
+                    }
                 }
-            }
+                
+                GUI.backgroundColor = Color.white;
+                GUILayout.EndVertical();
+                
+                GUILayout.Space(5);
+                GUILayout.BeginHorizontal();
+                GUIStyle hintStyle2 = new GUIStyle(GUI.skin.label);
+                hintStyle2.fontSize = 11;
+                hintStyle2.normal.textColor = new Color(0.65f, 0.7f, 0.8f);
+                GUILayout.Label("💡 Enter发送 | Shift+Enter换行 | 空格发送", hintStyle2);
+                GUILayout.FlexibleSpace();
+                
+                Color btnColor2 = _isProcessing ? new Color(0.4f, 0.4f, 0.4f) : new Color(0.25f, 0.65f, 0.95f);
+                GUI.backgroundColor = btnColor2;
+                GUIStyle btnStyle2 = new GUIStyle(GUI.skin.button);
+                btnStyle2.fontSize = 13;
+                btnStyle2.fontStyle = FontStyle.Bold;
+                btnStyle2.normal.textColor = Color.white;
+                btnStyle2.hover.textColor = Color.white;
+                if (GUILayout.Button(_isProcessing ? "⏳ 思考中..." : "📤 发送", btnStyle2, GUILayout.Height(34), GUILayout.Width(100)))
+                {
+                    if (!string.IsNullOrEmpty(_playerInput.Trim()) && !_isProcessing)
+                    {
+                        StartCoroutine(AIProcessRoutine(_playerInput.Trim()));
+                        _playerInput = "";
+                    }
+                }
+                GUI.backgroundColor = Color.white;
+                GUILayout.EndHorizontal();
 
-            GUILayout.EndVertical();
-            GUILayout.EndScrollView(); // 结束外层滚动
+                GUILayout.EndVertical();
+                GUILayout.EndScrollView();
+            }
 
             // 允许拖拽窗口
             GUI.DragWindow();
